@@ -16,7 +16,4 @@ run: mandel run.c
 	-rm -f run.o
 
 clean:
-	-@cp mandel.c save
-	-@cp makefile save
 	-@rm -f *~ *.o mandel run
-	@ls save -latrn
