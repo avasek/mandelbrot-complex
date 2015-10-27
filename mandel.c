@@ -12,13 +12,15 @@
 #define   MIN_R       0.0000001
 #define   NUM_THREADS 4
 
-
+/* Use EIGHT_BIT to toggle between 8 bit and 16 bit encoding for the PNG file*/
 //#define EIGHT_BIT 8
 
+/* Use BRANCH to toggle methods of calculating the branch cut in the recursive step */
 //#define BRANCH 1
 
 
-#ifdef EIGHT_BIT
+/* Use the following definitions to define the IHDR header for the PNG file*/
+#ifdef EIGHT_BIT 
 #define   BIT_DEPTH   8
 #endif
 #ifndef EIGHT_BIT
@@ -27,31 +29,56 @@
 #define   COLOR_TYPE  PNG_COLOR_TYPE_RGB
 #define   INTERLACING PNG_INTERLACE_NONE
 
+
+/* The following define the color space for the */
 #define   BLACK   0xFF000000
 #define   START   0x0022FF22
 #define   END     0x008888FF
 
-#define   MIN_DIM  100   
 
+// Define the minimum dimension allowed for a single side
+#define   MIN_DIM  100   
+// Use a seperate folder for the 
 #define   FOLDER   "./Output"
 
+
+// Define the static variables which will uniquely describe the Mandelbrot image
+// (Note this does not count the number of bits or the branching used)
 static uint32_t s_width;
 static uint32_t s_height;
-static double s_scale;
-static double s_center_r;
-static double s_center_i;
-static double s_power_r;
-static double s_power_i;
+static double   s_scale;
+static double   s_center_r;
+static double   s_center_i;
+static double   s_power_r;
+static double   s_power_i;
 
+// The coorinates of the upper left corner of the image
+static double   cornerR;
+static double   cornerI;
+
+// The pointer for the PNG image
 static png_structp png_ptr;
-static double      cornerR;
-static double      cornerI;
-
-//static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 
 
-int create_image(uint32_t width, uint32_t height, double scale,
-                 double center_r, double center_i, double power_r, double power_i);
+
+/* This struct is a single row of the image. 
+Use this to keep track of the rows and ensure they are printed in the correct order */
+struct row_data{
+  int row_number;
+  png_bytep vals;
+};
+
+// This struct saves the pipes that will be used by the threads that are calculating the image
+// The first pipe is read to find the row numbers and the second is used to write the row_data
+struct pipes{
+  int pipeRN; // Row Numbers
+  int pipeRD; // Row Data
+};
+
+/* This function will create the PNG image which is used to store the Mandelbrot set.  
+After creating the empty PNG image, it will call the function calc_image to calculate the 
+fractal. After the image has been calculated the PNG image is ended.*/
+int create_image();
 void calc_image();
 void *handle_pthread(void *ptr_pipe);
 png_bytep calculate_row(int i);
@@ -61,16 +88,6 @@ void *handle_output(void *row_data_pipe);
 void   _abort(const char * s, ...);
 double _absolute(double d);
 
-struct row_data{
-  int row_number;
-  png_bytep vals;
-};
-
-struct pipes{
-  int pipeRN; // Row Numbers
-  int pipeRD; // Row Data
-};
-
 int main(int argc, char **argv){
   // For optarg()
   extern char *optarg; 
@@ -78,13 +95,13 @@ int main(int argc, char **argv){
 
   // Command line arguments, with their default values
   // These values determine the location and type of plot to create
-  uint32_t width = 1920; // w
-  uint32_t height = 1080; // h
-  double scale = 0.002; // s
-  double center_r = -0.5; // r
-  double center_i = 0.0; // i
-  double power_r = 2.0; // a
-  double power_i = 0.0; // b
+  s_width = 1920;
+  s_height = 1080; // h
+  s_scale = 0.002; // s
+  s_center_r = -0.5; // r
+  s_center_i = 0.0; // i
+  s_power_r = 2.0; // a
+  s_power_i = 0.0; // b
 
   // Collect Command Line arguments
   int opt;
@@ -94,55 +111,46 @@ int main(int argc, char **argv){
       return -1;
     }
     switch(opt) {
-    case 'w': width=(uint32_t)strtoul(optarg, NULL, 0);
+    case 'w': s_width=(uint32_t)strtoul(optarg, NULL, 0);
       break;
-    case 'h': height=(uint32_t)strtoul(optarg, NULL, 0);
+    case 'h': s_height=(uint32_t)strtoul(optarg, NULL, 0);
       break;
-    case 's': scale=strtod(optarg,(char **) NULL);
+    case 's': s_scale=strtod(optarg,(char **) NULL);
       break;
-    case 'r': center_r=strtod(optarg,(char **) NULL);
+    case 'r': s_center_r=strtod(optarg,(char **) NULL);
       break;
-    case 'i': center_i=strtod(optarg,(char **) NULL);
+    case 'i': s_center_i=strtod(optarg,(char **) NULL);
       break;
-    case 'a': power_r=strtod(optarg,(char **) NULL);
+    case 'a': s_power_r=strtod(optarg,(char **) NULL);
       break;
-    case 'b': power_i=strtod(optarg,(char **) NULL);
+    case 'b': s_power_i=strtod(optarg,(char **) NULL);
       break;
     default: printf("Bad user argument: %c", (char) opt);
       break;
     }
   }
 
-  if((width < MIN_DIM) || (height < MIN_DIM)){
-    printf("Dimensions are too small: %d x %d\nMin: %d\n", width, height, MIN_DIM);
+  // Test the parameters passed through the command line to confirm 
+  // that the height and width are within the desired range
+  if((s_width < MIN_DIM) || (s_height < MIN_DIM)){
+    printf("Dimensions are too small: %d x %d\nMin: %d\n", s_width, s_height, MIN_DIM);
     return -1;
   }
 
-
-  return create_image(width, height, scale, center_r, center_i, power_r, power_i);
+  // Now that the parameters of the set have been determined, create the fractal
+  return create_image();
 }
 
-int create_image(uint32_t width, uint32_t height, double scale, 
-                 double center_r, double center_i, double power_r, double power_i){
+int create_image(){
   png_FILE_p fp;
   png_infop info_ptr;
   char *name;
-
-  // Set static variables that describe the image that is being created
-  s_width = width;
-  s_height = height;
-  s_scale = scale;
-  s_center_r = center_r;
-  s_center_i = center_i;
-  s_power_r = power_r;
-  s_power_i = power_i;
-
 
   // Create a filename based on the parameters given by the user
   // Uniquely describes a Mandelbrot image (within the accuracy of the printed values)
   name = (char *)malloc(200*sizeof(char));
   sprintf(name, "%s/Dimension: %dx%d, Center: %.4f%+.4fi, Scale: %.2e, Exp: %0.2e+%0.2ei.png", 
-          FOLDER, width, height, center_r, center_i, scale, power_r, power_i);
+          FOLDER, s_width, s_height, s_center_r, s_center_i, s_scale, s_power_r, s_power_i);
   printf("Output Filename: %s\n", name);
   fp = (png_FILE_p) fopen(name,"wb");
   free(name);
