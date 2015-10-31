@@ -10,7 +10,7 @@
 #define   DEPTH       2000
 #define   ESCAPE      49.0
 #define   MIN_R       0.0000001
-#define   NUM_THREADS 4
+//#define   NUM_THREADS 4
 
 /* Use EIGHT_BIT to toggle between 8 bit and 16 bit encoding for the PNG file*/
 //#define EIGHT_BIT 8
@@ -46,6 +46,7 @@
 // (Note this does not count the number of bits or the branching used)
 static uint32_t s_width;
 static uint32_t s_height;
+static uint32_t NUM_THREADS;
 static double   s_scale;
 static double   s_center_r;
 static double   s_center_i;
@@ -103,9 +104,11 @@ int main(int argc, char **argv){
   s_power_r = 2.0; // a
   s_power_i = 0.0; // b
 
+  NUM_THREADS = 4;
+
   // Collect Command Line arguments
   int opt;
-  while((opt=getopt(argc, argv, "w:h:s:r:i:a:b:")) != -1){
+  while((opt=getopt(argc, argv, "w:h:s:r:i:a:b:t:")) != -1){
     if (optarg == NULL){
       printf("Optarg is null!!");
       return -1;
@@ -114,6 +117,8 @@ int main(int argc, char **argv){
     case 'w': s_width=(uint32_t)strtoul(optarg, NULL, 0);
       break;
     case 'h': s_height=(uint32_t)strtoul(optarg, NULL, 0);
+      break;
+    case 't': NUM_THREADS=(uint32_t)strtoul(optarg, NULL, 0);
       break;
     case 's': s_scale=strtod(optarg,(char **) NULL);
       break;
@@ -148,11 +153,19 @@ int create_image(){
 
   // Create a filename based on the parameters given by the user
   // Uniquely describes a Mandelbrot image (within the accuracy of the printed values)
-  name = (char *)malloc(200*sizeof(char));
+  if ((name = (char *)malloc(200*sizeof(char))) == NULL){
+    printf("Error allocating memory for image name!\n");
+    return -1;
+  }
   sprintf(name, "%s/Dimension: %dx%d, Center: %.4f%+.4fi, Scale: %.2e, Exp: %0.2e+%0.2ei.png", 
           FOLDER, s_width, s_height, s_center_r, s_center_i, s_scale, s_power_r, s_power_i);
   printf("Output Filename: %s\n", name);
-  fp = (png_FILE_p) fopen(name,"wb");
+
+  if((fp = (png_FILE_p) fopen(name,"wb"))==NULL){
+    printf("File error creating file: %s\n", name);
+    return -1;
+  }
+
   free(name);
 
   // Initialize the PNG file which will hold the Mandelbrot image
@@ -184,12 +197,23 @@ int create_image(){
   if (setjmp(png_jmpbuf(png_ptr)))
     _abort("[write_png_file] Error during ending");
   png_write_end(png_ptr,info_ptr);
+
+  // Close the file
   fclose((FILE *) fp);
   // Return zero on proper exit
   return 0;
 }
 
 
+/*
+  Function: calc_image
+
+  Creates the threads which will calculate the fractal for each row 
+  and the thread which uses those values to write a row to the PNG
+
+  Input:    None
+  Returns:  None (PNG data is computed during this time)
+*/
 void calc_image(){
   pthread_t threads[NUM_THREADS+1];
   int i, j;
@@ -253,29 +277,43 @@ void calc_image(){
 }
 
 
-void *handle_pthread(void *ptr_pipe){
-  struct pipes pp = *((struct pipes *) ptr_pipe);
+/*
+  Function: handle_pthread
 
-  int read_pipe = pp.pipeRN;
-  int write_pipe = pp.pipeRD;
-  int value=0;
-  struct row_data *rowD;
+  This function will read row numbers from an input pipe. From these row numbers,
+  the function will use the calculate_row function to find the row data. After finding
+  the row data, the function will pass the result to the 
+  image writing thread using the output pipe.
+
+  Input: 
+        void *ptr_pipe: pointer to a struct ptr_pipe, 
+                        which hold the pointer to the input and output pipe file descriptors
+  Output:
+        NULL
+*/
+void *handle_pthread(void *ptr_pipe){
+  struct pipes pp;
+  struct row_data rowD;
+  int value;
+  
+  // Initialize pipes and value
+  pp = *((struct pipes *) ptr_pipe);
+  value=0;
 
   // Take the row numbers passed in the pipe and calculate the color the entire row
   while(value>=0){
-    if(read(read_pipe, &value, sizeof(int))!=sizeof(int)){
+    if(read(pp.pipeRN, &value, sizeof(int))!=sizeof(int)){
       printf("Read Error!!\n");
       exit(-1);
     }
+    // If the value is less than zero, the image is done, otherwise continue calculating the row data
     if (value >= 0){
-      if (NULL == (rowD = (struct row_data *) malloc(sizeof(struct row_data)))){
-        printf("Error Allocating struct row_data");
-        exit(-1);
-      }
-      rowD->vals = calculate_row(value);
-      rowD->row_number = value;
-      if(write(write_pipe, rowD, sizeof(struct row_data))!=sizeof(struct row_data)){
-        printf("Read Error!!\n");
+      // Calculate the values in the row and keep them with the row number
+      rowD.vals = calculate_row(value);
+      rowD.row_number = value;
+      // Pass the row data to the thread which is writing the row
+      if(write(pp.pipeRD, &rowD, sizeof(struct row_data))!=sizeof(struct row_data)){
+        printf("Error writing the row data!!\n");
         exit(-1);
       }
     }
@@ -284,68 +322,108 @@ void *handle_pthread(void *ptr_pipe){
 }
 
 
+/*
+  Function: handle_output
+
+  This function will read row data from the fractal calculating pthreads. As the pthreads
+  calculate the row data, they will pass the data using the row_data struct, allowing the 
+  data for the row, and the row number, to be passed to the thread using this function.
+  At such time, this thread will save the row data in an array. After saving the PNG image
+  will be written, keeping track of proper row numbers. As the image is printed, the memory
+  will be released, allowing the overall program a smaller overhead.
+
+  Input: 
+        void *row_data_pipe: pointer to the file descriptor of the pipe for the row data
+  Output:
+        NULL
+*/
 void *handle_output(void *row_data_pipe){
   int next_row;
-  int read_pipe = *((int *) row_data_pipe);
-
+  int read_pipe;
   png_bytep *rows;
   struct row_data read_data;
 
-  rows = (png_bytep *)malloc(sizeof(png_bytep)*s_height);
+  read_pipe = *((int *) row_data_pipe);
 
+  // Make an array to hold the data for the individual rows 
+  //  and initilize all of the pointers to NULL
+  rows = (png_bytep *)malloc(sizeof(png_bytep)*s_height);
   for (next_row=0; next_row<s_height; next_row++)
     rows[next_row]=NULL;
 
+  /*
+    Read the row data from one of the thread that are calculating the image.
+    Once this data has been read, add the row data to the image, using the given row number. 
+    Next, use the array to write the next row in the image, until the first break in 
+    the image is found. At this point, start again with reading data from the from the 
+    calculation threads.
+   */
   next_row = 0;
-
   while(next_row != s_height){
     if(read(read_pipe, &read_data, sizeof(struct row_data)) != sizeof(struct row_data)){
       printf("Error reading return values\n");
       exit(-1);
     }
-
+    // Save row data
     rows[read_data.row_number]=read_data.vals;
     
+    // Write as many rows as is possible, with the current information
     while(rows[next_row] != NULL){
-      png_write_row(png_ptr,rows[next_row]);
+      png_write_row(png_ptr,rows[next_row]); // Write image row
       free(rows[next_row]);
       rows[next_row]=NULL;
       next_row++;
     }
   }
   free(rows);
-  return NULL;
+  return NULL; // Required from pthread
 }
 
+
+/*
+  Function: calculate_row
+
+  This function takes a row number and calculates the value of the fractal at each pixel in the row.
+  With this value, the proper color is found and converted using the proper bit depth.
+
+  Preprocessor Flags:
+        EIGHT_BIT: If this flag is set, the function will calculate the pixels using an 
+                   eight bit color scheme. If the flag is not set, the pixels will be calculated
+                   using a sixteen bit scheme
+  Input: 
+        int i: row number for the row that this function is computing
+  Output:
+        png_bytep: a pointer to the bytes which will be used to write a single row of the PNG image
+*/
 png_bytep calculate_row(int i){
   png_bytep vals;
-  int j;
   double result;
+  int j, start, ii;
 
+  // Allocate space to store the row data
   if ((vals = (png_bytep) malloc(s_width*sizeof(png_byte)*(BIT_DEPTH/8)*3)) == NULL){
     printf("Bad allocaion of row data!\n");
     _exit(-1);
   }
 
+
   for(j=0; j < s_width; j++){
+    // Calculate the result
     result = calculate_escape(j, i);
-    int start = j*3*BIT_DEPTH/8;
-    int ii=0;
+
+    // Find the start of the correct pixel
+    start = j*3*BIT_DEPTH/8;
+
+    // If the pixel is in the set (recurses to the limit), set the pixel to black
     if (result > 0.9999999){
-      for(;ii<((BIT_DEPTH/8)*3); ii++) 
+      for(ii=0;ii<((BIT_DEPTH/8)*3); ii++) 
         vals[start++]=0x00;
     }
 #ifdef EIGHT_BIT
     else {
-      if (result < 0.1){
-        vals[start++]=0x22;
-        vals[start++]=0xFF;
-        vals[start]=0x22; 
-      } else {
-        vals[start++]=0x88;
-        vals[start++]=0x88;
-        vals[start]=0xFF; 
-      }
+      vals[start++]=0xFF-(png_byte)(result*0xFF);
+      vals[start++]=0xFF-(png_byte)(result*0x77);
+      vals[start]=0xFF-(png_byte)(result*0xFF);
     }
 #endif
 #ifndef EIGHT_BIT
