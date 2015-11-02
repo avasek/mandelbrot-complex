@@ -6,34 +6,55 @@
 #include <png.h>
 #include <stdint.h>
 
+/*
+  These Values are used to control the recursive fractal funtion. 
 
+  DEPTH:    The maximum number of steps used for testing
+  ESCAPE:   The square of the largest absolute value allowed before ending testing
+  MIN_R:    This is the square of the smallest absolute value the function will check
+              to prevent errors with the log function
+*/
 #define   DEPTH       2000
 #define   ESCAPE      49.0
-#define   MIN_R       0.0000001
-//#define   NUM_THREADS 4
+#define   MIN_R       1E-12
 
-/* Use EIGHT_BIT to toggle between 8 bit and 16 bit encoding for the PNG file*/
+
+
+
+/*
+  Use the EIGHT_BIT and BRANCH constants as flags. First clear all flags that have been set inadvertently.
+  The default is for both to not be set.
+
+  EIGHT_BIT: If set, the PNG file will be encoded using a 8 bit encoding for pixel color, 
+             otherwise the default is 16 bit
+  BRANCH:    If set, the branch cut for the arctangent function will be from 
+             (theta-pi,theta+pi) where theta is the original argument of the point. Otherwise the branch cut
+             will the (b-pi,b+pi), where b is the complex portion of the 
+             exponent in the recursive fractal definition
+*/
+#ifdef EIGHT_BIT
+#undef EIGHT_BIT
+#endif
+#ifdef BRANCH
+#undef BRANCH
+#endif
+
 //#define EIGHT_BIT 8
-
-/* Use BRANCH to toggle methods of calculating the branch cut in the recursive step */
-//#define BRANCH 1
+#define BRANCH 1
 
 
-/* Use the following definitions to define the IHDR header for the PNG file*/
+/*
+  Use the following definitions to define the IHDR header for the PNG file
+  
+*/
 #ifdef EIGHT_BIT 
 #define   BIT_DEPTH   8
-#endif
-#ifndef EIGHT_BIT
+#else
 #define   BIT_DEPTH   16
 #endif
+
 #define   COLOR_TYPE  PNG_COLOR_TYPE_RGB
 #define   INTERLACING PNG_INTERLACE_NONE
-
-
-/* The following define the color space for the */
-#define   BLACK   0xFF000000
-#define   START   0x0022FF22
-#define   END     0x008888FF
 
 
 // Define the minimum dimension allowed for a single side
@@ -41,9 +62,10 @@
 // Use a seperate folder for the 
 #define   FOLDER   "./Output"
 
-
-// Define the static variables which will uniquely describe the Mandelbrot image
-// (Note this does not count the number of bits or the branching used)
+/*
+  Define the static variables which will uniquely describe the Mandelbrot image
+  (Note this does not count the number of bits or the branching used)
+*/
 static uint32_t s_width;
 static uint32_t s_height;
 static uint32_t NUM_THREADS;
@@ -62,23 +84,24 @@ static png_structp png_ptr;
 
 
 
-/* This struct is a single row of the image. 
-Use this to keep track of the rows and ensure they are printed in the correct order */
+/* 
+   This struct is a single row of the image. 
+   Use this to keep track of the rows and ensure they are printed in the correct order 
+*/
 struct row_data{
   int row_number;
   png_bytep vals;
 };
 
-// This struct saves the pipes that will be used by the threads that are calculating the image
-// The first pipe is read to find the row numbers and the second is used to write the row_data
+/* 
+   This struct saves the pipes that will be used by the threads that are calculating the image
+   The first pipe is read to find the row numbers and the second is used to write the row_data
+*/
 struct pipes{
   int pipeRN; // Row Numbers
   int pipeRD; // Row Data
 };
 
-/* This function will create the PNG image which is used to store the Mandelbrot set.  
-After creating the empty PNG image, it will call the function calc_image to calculate the 
-fractal. After the image has been calculated the PNG image is ended.*/
 int create_image();
 void calc_image();
 void *handle_pthread(void *ptr_pipe);
@@ -146,6 +169,18 @@ int main(int argc, char **argv){
   return create_image();
 }
 
+
+/* 
+   This function will create the PNG image which is used to store the Mandelbrot set.  
+   After creating the empty PNG image, it will call the function calc_image to calculate the 
+   fractal. After the image has been calculated the PNG image is ended.
+
+   Input:
+              None
+   Output:    
+              Returns 0 on success and -1 on failure
+*/
+
 int create_image(){
   png_FILE_p fp;
   png_infop info_ptr;
@@ -157,8 +192,14 @@ int create_image(){
     printf("Error allocating memory for image name!\n");
     return -1;
   }
-  sprintf(name, "%s/Dimension: %dx%d, Center: %.4f%+.4fi, Scale: %.2e, Exp: %0.2e+%0.2ei.png", 
+#ifdef BRANCH
+  sprintf(name, "%s/Dimension: %dx%d, Center: %.4f%+.4fi, Scale: %.2e, Exp: %0.2e+%0.2ei, Branch set.png", 
           FOLDER, s_width, s_height, s_center_r, s_center_i, s_scale, s_power_r, s_power_i);
+#else
+  sprintf(name, "%s/Dimension: %dx%d, Center: %.4f%+.4fi, Scale: %.2e, Exp: %0.2e+%0.2ei, Branch not set.png", 
+          FOLDER, s_width, s_height, s_center_r, s_center_i, s_scale, s_power_r, s_power_i);
+#endif
+
   printf("Output Filename: %s\n", name);
 
   if((fp = (png_FILE_p) fopen(name,"wb"))==NULL){
@@ -211,8 +252,10 @@ int create_image(){
   Creates the threads which will calculate the fractal for each row 
   and the thread which uses those values to write a row to the PNG
 
-  Input:    None
-  Returns:  None (PNG data is computed during this time)
+  Input:
+          None
+  Output:
+          None (PNG data is computed during this time)
 */
 void calc_image(){
   pthread_t threads[NUM_THREADS+1];
@@ -415,18 +458,23 @@ png_bytep calculate_row(int i){
     start = j*3*BIT_DEPTH/8;
 
     // If the pixel is in the set (recurses to the limit), set the pixel to black
-    if (result > 0.9999999){
+    if (result >= 1.0){
       for(ii=0;ii<((BIT_DEPTH/8)*3); ii++) 
         vals[start++]=0x00;
     }
+
+    /* 
+       Here we use the value returned by the calculat_escape function to determine
+       the color of the pixel. For the eight bit encoding, there are three png_bytes of 
+       color data, whereas the sixteen bit encoding has 6 png_bytes
+    */ 
 #ifdef EIGHT_BIT
     else {
       vals[start++]=0xFF-(png_byte)(result*0xFF);
       vals[start++]=0xFF-(png_byte)(result*0x77);
       vals[start]=0xFF-(png_byte)(result*0xFF);
     }
-#endif
-#ifndef EIGHT_BIT
+#else
     else{
       vals[start++]=0xDD-(png_byte)(result*0xAA);
       vals[start++]=0xFF-(png_byte)(result*0xFF);
@@ -442,7 +490,124 @@ png_bytep calculate_row(int i){
   return vals;
 }
 
+/*
+  Function: calculate_escape
 
+  This is the function which tests each point to find if it is in the fractal and if not, the escape
+  from that set. 
+
+  ------------------------------------------------------------------------
+  Background:
+  ------------------------------------------------------------------------
+  For this, the following basic recursive definition of the fractal is used, assuming
+  the complex value c is the point being tested. The Mandelbrot set is traditionally defined for (a+bi) = 2.
+
+  Base Case:
+  Z(0) = c
+  Recursive Case:
+  Z(N+1) = Z(N)^(a+bi)+c
+
+  The fractal is defined to be the set of points C for which the following limit is held.
+
+  lim N->Inf |Z(N)| < bound, bound > 0, bound element of the Reals.
+
+  For the Mandelbrot set [(a+bi) = 2] is independant of the value of the bound, given that b >= 2.
+
+  Traditionally, the Mandelbrot fractal is displayed as a colorful image. This is obtained by noting the 
+  value of N and |Z(N)| for the first value that is larger than the bound. The following formula is used 
+  to generate a value in the range (0,1), based on the Taylor expansion shown at
+  http://linas.org/art-gallery/escape/escape.html.
+
+  modN = N + 1 - log(log(|Z(N)|)) / log(r^a * e^(-b * theta))
+  
+  The justification of the final term is shown below. The returned value is modN divided by the 
+  maximum number of iterations allowed by the program.
+
+  ------------------------------------------------------------------------
+  Implementation:
+  ------------------------------------------------------------------------
+  The recursive case can be solved using the following expressions:
+
+  Define The Following:
+                Z(N)        = r e^(i * theta)       -> Polar form of a complex number
+                Coefficient = r^a * e^(-b * theta)  = Coe 
+                Angle       = a * theta + b * ln(r) = Ang
+
+  From these definitions, we can write the recursive form in an easily calculable form, 
+         where Re{Z} is the real component of Z and Im{Z} is the imaginary component of Z:
+                Re{Z(N+1)} = Coe * cos ( Ang ) + Re{c}
+                Im{Z(N+1)} = Coe * sin ( Ang ) + Im{c}
+
+  Now, we convert the value Z(N+1) from Standard Form to Polar Form:
+                Z(N+1) = r e^(i * theta)
+                r      = Sqrt(Re{Z(N+1)}*Re{Z(N+1)}+Im{Z(N+1)}*Im{Z(N+1)})
+                theta  = arctan2(Re{Z(N+1)}, Im{Z(N+1)})
+
+  In order to save us from using the square root function, we can use the following modifications
+                Z(N+1) = Sqrt(rsq) * e^(i * theta)
+                rsq    = Re{Z(N+1)}*Re{Z(N+1)}+Im{Z(N+1)}*Im{Z(N+1)}
+                theta  = arctan2(Re{Z(N+1)}, Im{Z(N+1)})
+
+  For this to b used, we also must modify the original definitions:
+                Z(N)        = Sqrt(rsq) * e^(i * theta)
+                Coefficient = rsq^(a/2) * e^(-b * theta)    = Coe 
+                Angle       = a * theta + 1/2 * b * ln(rsq) = Ang
+
+  ------------------------------------------------------------------------
+  Branch Cuts:
+  ------------------------------------------------------------------------
+  One more discussion must be had before generating using these formulas, and that involves branch cuts.
+  Branch cuts are important when discussing the value returned by the arctangent function. The function is
+  defined such that:
+
+       tan(x) = y <==> arctan(y) = x
+
+  However, the following is true of the tangent function:
+       tan(x) = tan(x + 2*pi) = tan(x + 4*pi) = tan(x - 2*pi) = .... = tan(x+2*pi*i), i-> integer
+
+  The arctangent function traditionally returns a value in the range (-pi, pi]. However, due to the property
+  of the tangent function, the value returned by the arctangent function can be in any range (x-pi, x+pi]
+  for any value of x. The range returned is known as the branch, and the extreme values of the range are
+  known as the branch cut (Note that in polar form, the angles x+pi and x-pi are coincident in the polar plane).
+
+  Unfortunately for complex exponentiation, the choice of which value of x to use to center the range
+  will affect the result that is obtained in a very meaningful way (Consider the formula above for Coe)
+
+  For the generation of fractals, there are many ways to pick a meaningful branch. Below are two methods
+
+  1. x = -b
+           Use the imaginary component of the exponent to set the branch 
+
+  2. x = Arg(c)
+           Use the argument of the original point to determine the branch
+
+
+  General Statements on branch cut:
+  Generally I have used this modified exponent "Multibrot" set generator for three general cases
+  and have the following generalizations about the "best" branch cut mode
+
+  1. Integer values of a and b=0 (ie. Z(N+1) = Z(N)^4 + C)
+      Here the branch cut method makes little to no difference
+
+  2. Small values for b and a=2 ((ie. Z(N+1) = Z(N)^(2+0.01i) + C))
+      I find the images look best with the first method of branch cut (flag not set)
+
+  3. Non-integer values of a and b=0
+     I have liked the images with the second method of the branch cut (flag is set)
+  
+  ------------------------------------------------------------------------
+  Function:
+  ------------------------------------------------------------------------
+  Preprocessor Flags:
+        BRANCH: If this flag is set, the function will calculate the branch cut for the arctangent
+                function using the argument of the initial point (r e ^ (i theta)). If not, the 
+                branch cut will be based on the complex component of the exponent in the recursive
+                definition of the fractal.
+  Input: 
+        int x,y: The coordinates of the pixel being calculated in the PNG image
+  Output:
+        double: a pointer to the bytes which will be used to write a single row of the PNG image
+*/
 double calculate_escape(int x, int y){
   double reV, imV, a, b;
   double rsq, r, th, coe, ang;
@@ -463,27 +628,25 @@ double calculate_escape(int x, int y){
   else{
     i=0;
     th = atan2(b,a);
-    
+
 #ifdef BRANCH
     br = th;
     while (br > (M_PI-s_power_i))
       br -= 2*M_PI;
-    while (th < (-1.*s_power_i-M_PI))
+    while (br < (-1.*s_power_i-M_PI))
       br += 2*M_PI;
 #endif
+
   }
 
   for(; i < DEPTH; i++){
-
-    // Perform a branch cut for the complex exponential
+// Perform a branch cut for the complex exponential    
 #ifdef BRANCH
     while (th > (br+M_PI))
       th -= 2.0*M_PI;
     while (th < (br-M_PI))
       th += 2.0*M_PI;
-#endif
-
-#ifndef BRANCH
+#else
     while (th > (M_PI-s_power_i))
       th -= 2*M_PI;
     while (th < (-1.*s_power_i-M_PI))
@@ -503,20 +666,17 @@ double calculate_escape(int x, int y){
       return 1.0;
 
     if (rsq >= ESCAPE) {
-      r = 1-2.0*log(0.5*log(rsq))/log(s_power_r*s_power_r+s_power_i*s_power_i);
+      coe = pow(rsq, s_power_r/2.)*exp(-1.0*s_power_i*th);
+      r = 1.0 - log(0.5*log(rsq)) / log(coe);
       r += (double) i;
       r = r/((double) DEPTH);
-      return pow(r,0.2);
+      return pow(r,0.15);
     }
   }
   return 1.00;
 }
 
 
-
-double _absolute(double d){
-  return d<0 ? -1.0*d : d;
-}
 
 void _abort(const char * s, ...) {
   va_list args;
