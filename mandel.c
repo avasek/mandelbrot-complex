@@ -17,7 +17,7 @@
               to prevent errors with the log function
 */
 #define   DEPTH       2000
-#define   ESCAPE      49.0
+#define   ESCAPE      100.0
 #define   MIN_R       1E-12
 
 
@@ -121,7 +121,7 @@ int main(int argc, char **argv){
 
   // Command line arguments, with their default values
   // These values determine the location and type of plot to create
-  s_width = 1920;
+  s_width = 1920; // w
   s_height = 1080; // h
   s_scale = 0.002; // s
   s_center_r = -0.5; // r
@@ -129,7 +129,7 @@ int main(int argc, char **argv){
   s_power_r = 2.0; // a
   s_power_i = 0.0; // b
 
-  NUM_THREADS = 4;
+  NUM_THREADS = 4; // t
 
   // Collect Command Line arguments
   int opt;
@@ -680,15 +680,15 @@ double calculate_escape(int x, int y){
 
     if (rsq >= ESCAPE) {
       coe = pow(rsq, s_power_r/2.)*exp(-1.0*s_power_i*th);
+      coe = 2.0*log(coe)/log(rsq);
       r = 1.0 - log(0.5*log(rsq)) / log(coe);
       r += (double) i;
-      r = r/((double) DEPTH);
-      return pow(r,0.15);
+      r = log(r)/log((double) DEPTH);
+      return pow(r,1.0);
     }
   }
   return 1.00;
 }
-
 
 
 void _abort(const char * s, ...) {
