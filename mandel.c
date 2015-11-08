@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <png.h>
 #include <stdint.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 /*
   These Values are used to control the recursive fractal funtion. 
@@ -185,6 +187,17 @@ int create_image(){
   png_FILE_p fp;
   png_infop info_ptr;
   char *name;
+  int saveError;
+
+
+  saveError = errno;
+  mkdir(FOLDER,
+        S_IRUSR|S_IWUSR|S_IXUSR|
+        S_IRGRP|S_IWGRP|S_IXGRP|
+        S_IROTH|S_IWOTH|S_IXOTH  );
+
+  errno = saveError;
+
 
   // Create a filename based on the parameters given by the user
   // Uniquely describes a Mandelbrot image (within the accuracy of the printed values)
