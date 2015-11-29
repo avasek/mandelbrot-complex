@@ -9,13 +9,13 @@ To use, download the files and run make
 5. make 
 
 # Background
-For this, the following basic recursive definition of the fractal is used, assuming the complex value c is the point being tested. The Mandelbrot set is traditionally defined for (a+bi) = 2.
+For this, the following basic recursive definition of the fractal is used, assuming the complex value C is the point being tested. The Mandelbrot set is traditionally defined for (a+bi) = 2.
 
 ```sh
   Base Case:
-  Z(0) = c
+  Z(0) = C
   Recursive Case:
-  Z(N+1) = Z(N)^(a+bi)+c
+  Z(N+1) = Z(N)^(a+bi)+C
 ```
 
   The fractal is defined to be the set of points C for which the following limit is held.
@@ -33,6 +33,26 @@ lim N->Inf |Z(N)| < bound, bound > 0, bound element of the Reals.
 ```
   
   The returned value is modN divided by the maximum number of iterations allowed by the program.
+
+# Examples
+```
+  Recursive Case:
+  Z(N+1) = Z(N)^2+C
+```
+![Standard Mandelbrot Image](https://github.com/avasek/mandelbrot-complex/blob/master/Examples/Dimension:%201920x1080%2C%20Center:%20-0.5000%2B0.0000i%2C%20Scale:%202.00e-03%2C%20Exp:%202.00e%2B00%2B0.00e%2B00i%2C%20Branch%20set.png)
+
+```
+  Recursive Case:
+  Z(N+1) = Z(N)^2.2+C
+```
+![Modify the Real Exponent](https://github.com/avasek/mandelbrot-complex/blob/master/Examples/Dimension:%201920x1080%2C%20Center:%20-0.5000%2B0.0000i%2C%20Scale:%202.00e-03%2C%20Exp:%202.20e%2B00%2B0.00e%2B00i%2C%20Branch%20set.png)
+
+```
+  Recursive Case:
+  Z(N+1) = Z(N)^(2+0.01i)+C
+```
+![Modify the Imaginary Exponent](https://github.com/avasek/mandelbrot-complex/blob/master/Examples/Dimension:%201920x1080%2C%20Center:%20-0.5000%2B0.0000i%2C%20Scale:%202.00e-03%2C%20Exp:%202.00e%2B00%2B1.00e-02i%2C%20Branch%20not%20set.png)
+
 
 # Using the Mandelbrot Set Generator
 
