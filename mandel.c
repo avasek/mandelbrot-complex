@@ -626,6 +626,10 @@ double calculate_escape(int x, int y){
   double rsq, r, th, coe, ang;
   int i;
 
+  /*
+  if (x+y > 0)
+    return ((double) x) /((double) s_width); 
+  */
 #ifdef BRANCH
   double br;
 #endif
@@ -681,10 +685,15 @@ double calculate_escape(int x, int y){
     if (rsq >= ESCAPE) {
       coe = pow(rsq, s_power_r/2.)*exp(-1.0*s_power_i*th);
       coe = 2.0*log(coe)/log(rsq);
-      r = 1.0 - log(0.5*log(rsq)) / log(coe);
+      r = 2.0 - log(0.5*log(rsq)) / log(coe);
       r += (double) i;
       r = log(r)/log((double) DEPTH);
-      return pow(r,1.0);
+      r = pow(r,0.5);
+      if (r < 0.0)
+        return 0.0;
+      if (r > 1.0)
+        return 1.0;
+      return r;
     }
   }
   return 1.00;
